@@ -1,8 +1,8 @@
-# Heart Disease Prediction API with Database
-# File: src/main.py
-# Now we save predictions to database!
+# Heart Disease Prediction API with Database and CORS
+# Added CORS to allow frontend connection
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware  # NEW : Import CORS
 from pydantic import BaseModel
 import joblib
 import pandas as pd
@@ -14,7 +14,7 @@ model_data = joblib.load('../models/heart_disease_model.pkl')
 model = model_data['model']
 feature_names = model_data['feature_names']
 
-# Database configuration (same as our setup)
+# Database configuration
 DB_CONFIG = {
     'host': 'localhost',
     'port': '5432',
@@ -26,9 +26,18 @@ DB_CONFIG = {
 # Create FastAPI app
 app = FastAPI(title="Heart Disease Prediction API", version="1.0.0")
 
+# Add CORS middleware (allows frontend to connect)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Allow frontend
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
+)
+
 # Define input data structure
 class PatientData(BaseModel):
-    name: str = "Unknown Patient"  # Added patient name
+    name: str = "Unknown Patient"
     age: int
     sex: int # 0 = female, 1 = male
     cp: int # chest pain type (0-3)
@@ -45,7 +54,7 @@ class PatientData(BaseModel):
 
 # Define response structure
 class PredictionResponse(BaseModel):
-    prediction_id: int  # Added database ID
+    prediction_id: int
     patient_name: str
     prediction: int
     probability_no_disease: float
@@ -58,7 +67,6 @@ class PredictionResponse(BaseModel):
 def save_prediction_to_db(patient_data: dict, prediction_result: dict):
     """Save prediction to PostgreSQL database"""
     try:
-        # Connect to database
         connection = psycopg2.connect(
             host=DB_CONFIG['host'],
             port=DB_CONFIG['port'],
@@ -69,7 +77,6 @@ def save_prediction_to_db(patient_data: dict, prediction_result: dict):
         connection.autocommit = True
         cursor = connection.cursor()
         
-        # Insert prediction with all patient data
         insert_sql = """
         INSERT INTO predictions (
             patient_name, age, sex, prediction, 
@@ -88,7 +95,6 @@ def save_prediction_to_db(patient_data: dict, prediction_result: dict):
             prediction_result['risk_level']
         ))
         
-        # Get the ID and timestamp of inserted record
         result = cursor.fetchone()
         prediction_id = result[0]
         prediction_date = result[1]
@@ -141,16 +147,16 @@ def read_root():
         "message": "Heart Disease Prediction API with Database!",
         "model": model_data['model_name'],
         "accuracy": model_data['accuracy'],
-        "features": "Predictions are now saved to database"
+        "frontend_url": "http://localhost:3000",
+        "cors_enabled": "✅"
     }
 
 @app.get("/health")
 def health_check():
-    # Check if database is working
     try:
         recent = get_recent_predictions(1)
         db_status = "connected"
-        total_predictions = len(get_recent_predictions(1000))  # Quick count
+        total_predictions = len(get_recent_predictions(1000))
     except:
         db_status = "disconnected"
         total_predictions = 0
@@ -158,15 +164,16 @@ def health_check():
     return {
         "status": "healthy",
         "database": db_status,
-        "total_predictions_stored": total_predictions
+        "total_predictions_stored": total_predictions,
+        "cors": "enabled"
     }
 
 @app.post("/predict", response_model=PredictionResponse)
 def predict_heart_disease(patient: PatientData):
-    # Convert input to DataFrame (same as before)
+    # Convert input to DataFrame
     patient_data = patient.dict()
     
-    # Remove name for model prediction (model doesn't need it)
+    # Remove name for model prediction
     model_input = {k: v for k, v in patient_data.items() if k != 'name'}
     patient_df = pd.DataFrame([model_input])
     
@@ -193,7 +200,6 @@ def predict_heart_disease(patient: PatientData):
     # Save to database
     prediction_id, prediction_date = save_prediction_to_db(patient_data, prediction_result)
     
-    # Return response with database info
     return PredictionResponse(
         prediction_id=prediction_id if prediction_id else 0,
         patient_name=patient.name,
@@ -235,7 +241,7 @@ def get_recent():
 def get_prediction_stats():
     """Get statistics about predictions"""
     try:
-        predictions = get_recent_predictions(1000)  # Get more for stats
+        predictions = get_recent_predictions(1000)
         
         if not predictions:
             return {"message": "No predictions available"}
@@ -244,7 +250,6 @@ def get_prediction_stats():
         disease_count = sum(1 for pred in predictions if pred[4] == 1)
         no_disease_count = total_predictions - disease_count
         
-        # Risk level stats
         high_risk = sum(1 for pred in predictions if pred[6] == "High Risk")
         medium_risk = sum(1 for pred in predictions if pred[6] == "Medium Risk")
         low_risk = sum(1 for pred in predictions if pred[6] == "Low Risk")
@@ -270,7 +275,8 @@ def get_model_info():
         "accuracy": model_data['accuracy'],
         "features": feature_names,
         "total_features": len(feature_names),
-        "database_integration": "Active"
+        "database_integration": "Active",
+        "cors_enabled": "Active"
     }
 
 # For testing locally
