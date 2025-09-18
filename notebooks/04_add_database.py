@@ -1,39 +1,38 @@
-import psycopg2
+import pg8000.native
 
 print("Setting up PostgreSQL Database")
 print("=" * 40)
 
 DB_CONFIG = {
     'host': 'localhost',
-    'port': '5432',
+    'port': 5432,
     'user': 'postgres',
     'password': 'Mypassword#007',
     'database': 'heart_disease_db'
 }
 
 try:
-    connection = psycopg2.connect(
-        host=DB_CONFIG['host'],
-        port=DB_CONFIG['port'],
+    # Connect to postgres database to create our database
+    conn = pg8000.native.Connection(
         user=DB_CONFIG['user'],
         password=DB_CONFIG['password'],
+        host=DB_CONFIG['host'],
+        port=DB_CONFIG['port'],
         database="postgres"
     )
-    connection.autocommit = True
-    cursor = connection.cursor()
+    
     print("Connected to PostgreSQL")
     
-    cursor.execute("SELECT 1 FROM pg_database WHERE datname = 'heart_disease_db'")
-    if not cursor.fetchone():
-        cursor.execute("CREATE DATABASE heart_disease_db")
+    # Check if database exists
+    result = conn.run("SELECT 1 FROM pg_database WHERE datname = :dbname", dbname=DB_CONFIG['database'])
+    if not result:
+        conn.run(f"CREATE DATABASE {DB_CONFIG['database']}")
         print("Created heart_disease_db database")
     
-    cursor.close()
-    connection.close()
+    conn.close()
     
-    connection = psycopg2.connect(**DB_CONFIG)
-    connection.autocommit = True
-    cursor = connection.cursor()
+    # Connect to our database
+    conn = pg8000.native.Connection(**DB_CONFIG)
     
     create_table_sql = """
     CREATE TABLE IF NOT EXISTS predictions (
@@ -48,11 +47,10 @@ try:
     )
     """
     
-    cursor.execute(create_table_sql)
+    conn.run(create_table_sql)
     print("Created predictions table")
     
-    cursor.close()
-    connection.close()
+    conn.close()
     print("Database setup complete")
     
 except Exception as error:

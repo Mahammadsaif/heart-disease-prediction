@@ -3,6 +3,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import os
 import joblib
 
 df = pd.read_csv('../data/heart_disease_clean.csv')
@@ -65,5 +66,6 @@ model_data = {
     'accuracy': best_accuracy
 }
 
-joblib.dump(model_data, '../models/heart_disease_model.pkl')
+os.makedirs("../models", exist_ok=True)
+joblib.dump(model, "../models/heart_disease_model.pkl")
 print(f"\nModel saved to ../models/heart_disease_model.pkl")

@@ -1,59 +1,103 @@
-# Heart Disease Prediction API with Database and CORS
-# Added CORS to allow frontend connection
-
+# src/main.py
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware  # NEW : Import CORS
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import joblib
 import pandas as pd
-import psycopg2
+import pg8000.native
 from datetime import datetime
+import os
+from typing import Any, List, Tuple, Optional
 
-# Load trained model
-model_data = joblib.load('../models/heart_disease_model.pkl')
-model = model_data['model']
-feature_names = model_data['feature_names']
+# -------------------------
+# Load model (robust)
+# -------------------------
+model_obj = joblib.load("models/heart_disease_model.pkl")
 
-# Database configuration
+# Support two common save formats:
+# 1) raw model saved directly
+# 2) dictionary like {"model": model, "feature_names": [...], "model_name": "..."}
+if hasattr(model_obj, "predict"):
+    model = model_obj
+    feature_names = getattr(model_obj, "feature_names", None)
+    model_name = getattr(model_obj, "model_name", "model")
+    model_accuracy = getattr(model_obj, "accuracy", None)
+else:
+    model_data = model_obj if isinstance(model_obj, dict) else {}
+    model = model_data.get("model")
+    feature_names = model_data.get("feature_names") or model_data.get("features")
+    model_name = model_data.get("model_name", "model")
+    model_accuracy = model_data.get("accuracy")
+
+# If feature order missing, fall back to a safe default (same as the dataset used)
+if feature_names is None:
+    feature_names = [
+        "age",
+        "sex",
+        "cp",
+        "trestbps",
+        "chol",
+        "fbs",
+        "restecg",
+        "thalach",
+        "exang",
+        "oldpeak",
+        "slope",
+        "ca",
+        "thal",
+    ]
+
+if model is None:
+    raise RuntimeError("Could not find trained model in models/heart_disease_model.pkl")
+
+# -------------------------
+# Database config (env)
+# -------------------------
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': '5432',
-    'user': 'postgres',
-    'password': 'Mypassword#007',
-    'database': 'heart_disease_db'
+    "host": os.getenv("DB_HOST", "localhost"),
+    "port": int(os.getenv("DB_PORT", 5432)),
+    "user": os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASSWORD", "postgres"),
+    "database": os.getenv("DB_NAME", "heart_disease"),
 }
 
-# Create FastAPI app
-app = FastAPI(title="Heart Disease Prediction API", version="1.0.0")
+# -------------------------
+# FastAPI app
+# -------------------------
+app = FastAPI(title="Heart Disease Prediction API")
 
-# Add CORS middleware (allows frontend to connect)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Allow frontend
+    allow_origins=["*"],  # for demo / deployment; lock down in production
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all HTTP methods
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Define input data structure
+# -------------------------
+# Pydantic models
+# -------------------------
 class PatientData(BaseModel):
     name: str = "Unknown Patient"
     age: int
-    sex: int # 0 = female, 1 = male
-    cp: int # chest pain type (0-3)
-    trestbps: int # resting blood pressure
-    chol: int # cholesterol
-    fbs: int # fasting blood sugar (0 or 1)
-    restecg: int # resting ECG (0-2)
-    thalach: int # max heart rate
-    exang: int # exercise angina (0 or 1)
-    oldpeak: float # ST depression
-    slope: int # slope of peak exercise ST (0-2)
-    ca: int # number of vessels colored (0-3)
-    thal: int # thalassemia (1-3)
+    sex: int
+    cp: int
+    trestbps: int
+    chol: int
+    fbs: int
+    restecg: int
+    thalach: int
+    exang: int
+    oldpeak: float
+    slope: int
+    ca: int
+    thal: int
 
-# Define response structure
+
 class PredictionResponse(BaseModel):
+    # silence pydantic protected namespace warning
+    model_config = {"protected_namespaces": ()}
+
     prediction_id: int
     patient_name: str
     prediction: int
@@ -63,223 +107,242 @@ class PredictionResponse(BaseModel):
     model_used: str
     prediction_date: str
 
-# Helper function to save prediction to database
-def save_prediction_to_db(patient_data: dict, prediction_result: dict):
-    """Save prediction to PostgreSQL database"""
+
+# -------------------------
+# DB helpers (pg8000.native)
+# -------------------------
+def get_db_connection() -> pg8000.native.Connection:
+    return pg8000.native.Connection(
+        user=DB_CONFIG["user"],
+        password=DB_CONFIG["password"],
+        host=DB_CONFIG["host"],
+        port=DB_CONFIG["port"],
+        database=DB_CONFIG["database"],
+    )
+
+
+@app.on_event("startup")
+def create_table_if_not_exists():
+    """Create predictions table if it doesn't exist (quietly fail if DB not available)."""
     try:
-        connection = psycopg2.connect(
-            host=DB_CONFIG['host'],
-            port=DB_CONFIG['port'],
-            user=DB_CONFIG['user'],
-            password=DB_CONFIG['password'],
-            database=DB_CONFIG['database']
+        conn = get_db_connection()
+        conn.run(
+            """
+        CREATE TABLE IF NOT EXISTS predictions (
+            id SERIAL PRIMARY KEY,
+            patient_name TEXT,
+            age INT,
+            sex INT,
+            cp INT,
+            trestbps INT,
+            chol INT,
+            fbs INT,
+            restecg INT,
+            thalach INT,
+            exang INT,
+            oldpeak FLOAT,
+            slope INT,
+            ca INT,
+            thal INT,
+            prediction INT,
+            disease_probability FLOAT,
+            risk_level TEXT,
+            prediction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        connection.autocommit = True
-        cursor = connection.cursor()
-        
-        insert_sql = """
+        """
+        )
+        # commit DDL
+        conn.run("COMMIT")
+        conn.close()
+        print("Predictions table ready")
+    except Exception as e:
+        print("Warning: could not create table (DB may be down). Error:", e)
+
+
+def save_prediction_to_db(patient: dict, prediction_result: dict) -> Tuple[Optional[int], Optional[str]]:
+    """Insert a prediction row and return (id, prediction_date). Return (None, None) on failure."""
+    try:
+        conn = get_db_connection()
+        sql = """
         INSERT INTO predictions (
-            patient_name, age, sex, prediction, 
-            disease_probability, risk_level
+            patient_name, age, sex, cp, trestbps, chol, fbs, restecg,
+            thalach, exang, oldpeak, slope, ca, thal,
+            prediction, disease_probability, risk_level
         )
-        VALUES (%s, %s, %s, %s, %s, %s)
+        VALUES (
+            :name, :age, :sex, :cp, :trestbps, :chol, :fbs, :restecg,
+            :thalach, :exang, :oldpeak, :slope, :ca, :thal,
+            :prediction, :prob, :risk
+        )
         RETURNING id, prediction_date
         """
-        
-        cursor.execute(insert_sql, (
-            patient_data['name'],
-            patient_data['age'],
-            patient_data['sex'],
-            prediction_result['prediction'],
-            prediction_result['probability_disease'],
-            prediction_result['risk_level']
-        ))
-        
-        result = cursor.fetchone()
-        prediction_id = result[0]
-        prediction_date = result[1]
-        
-        cursor.close()
-        connection.close()
-        
-        return prediction_id, prediction_date
-        
+        result = conn.run(
+            sql,
+            name=patient["name"],
+            age=patient["age"],
+            sex=patient["sex"],
+            cp=patient["cp"],
+            trestbps=patient["trestbps"],
+            chol=patient["chol"],
+            fbs=patient["fbs"],
+            restecg=patient["restecg"],
+            thalach=patient["thalach"],
+            exang=patient["exang"],
+            oldpeak=patient["oldpeak"],
+            slope=patient["slope"],
+            ca=patient["ca"],
+            thal=patient["thal"],
+            prediction=prediction_result["prediction"],
+            prob=prediction_result["probability_disease"],
+            risk=prediction_result["risk_level"],
+        )
+        # commit the insert
+        conn.run("COMMIT")
+        conn.close()
+        if not result:
+            return None, None
+        row = result[0]  # tuple (id, datetime)
+        return int(row[0]), str(row[1])
     except Exception as e:
-        print(f"Database error: {e}")
+        print("DB insert error:", e)
         return None, None
 
-# Helper function to get recent predictions
-def get_recent_predictions(limit=10):
-    """Get recent predictions from database"""
+
+def fetch_recent(limit: int = 10) -> List[tuple]:
+    """Return recent rows (list of tuples). If DB error, return empty list."""
     try:
-        connection = psycopg2.connect(
-            host=DB_CONFIG['host'],
-            port=DB_CONFIG['port'],
-            user=DB_CONFIG['user'],
-            password=DB_CONFIG['password'],
-            database=DB_CONFIG['database']
-        )
-        cursor = connection.cursor()
-        
-        select_sql = """
-        SELECT id, patient_name, age, sex, prediction, 
-               disease_probability, risk_level, prediction_date
-        FROM predictions 
-        ORDER BY prediction_date DESC 
-        LIMIT %s
+        conn = get_db_connection()
+        limit = max(1, int(limit))
+        # we format the limit as an integer to avoid parameter-style mismatches
+        sql = f"""
+        SELECT id, patient_name, age, sex, prediction, disease_probability, risk_level, prediction_date
+        FROM predictions
+        ORDER BY prediction_date DESC
+        LIMIT {limit}
         """
-        
-        cursor.execute(select_sql, (limit,))
-        results = cursor.fetchall()
-        
-        cursor.close()
-        connection.close()
-        
-        return results
-        
+        rows = conn.run(sql)
+        conn.close()
+        return rows or []
     except Exception as e:
-        print(f"Database error: {e}")
+        print("DB fetch error:", e)
         return []
 
+
+# -------------------------
+# Endpoints
+# -------------------------
 @app.get("/")
-def read_root():
+def root():
     return {
-        "message": "Heart Disease Prediction API with Database!",
-        "model": model_data['model_name'],
-        "accuracy": model_data['accuracy'],
-        "frontend_url": "http://localhost:3000",
-        "cors_enabled": "✅"
+        "message": "Heart Disease Prediction API with Database",
+        "model": model_name,
+        "accuracy": model_accuracy,
     }
+
 
 @app.get("/health")
 def health_check():
+    ok = {"status": "healthy", "database": "unknown", "total_predictions_stored": 0}
+    # quick DB check
     try:
-        recent = get_recent_predictions(1)
-        db_status = "connected"
-        total_predictions = len(get_recent_predictions(1000))
-    except:
-        db_status = "disconnected"
-        total_predictions = 0
-        
-    return {
-        "status": "healthy",
-        "database": db_status,
-        "total_predictions_stored": total_predictions,
-        "cors": "enabled"
-    }
+        rows = fetch_recent(1)
+        ok["database"] = "connected"
+        ok["total_predictions_stored"] = len(fetch_recent(1000))
+    except Exception:
+        ok["database"] = "disconnected"
+    return ok
+
 
 @app.post("/predict", response_model=PredictionResponse)
-def predict_heart_disease(patient: PatientData):
-    # Convert input to DataFrame
-    patient_data = patient.dict()
-    
-    # Remove name for model prediction
-    model_input = {k: v for k, v in patient_data.items() if k != 'name'}
-    patient_df = pd.DataFrame([model_input])
-    
-    # Make prediction
-    prediction = model.predict(patient_df)[0]
-    probabilities = model.predict_proba(patient_df)[0]
-    
-    # Determine risk level
-    disease_prob = probabilities[1]
-    if disease_prob >= 0.7:
-        risk_level = "High Risk"
-    elif disease_prob >= 0.4:
-        risk_level = "Medium Risk"
+def predict(patient: PatientData):
+    patient_dict = patient.dict()
+    # build DataFrame using feature_names order
+    try:
+        row = [[patient_dict.get(fn) for fn in feature_names]]
+        df = pd.DataFrame(row, columns=feature_names)
+    except Exception:
+        # final fallback: try simple single-row DataFrame
+        df = pd.DataFrame([ {k: v for k, v in patient_dict.items() if k != "name"} ])
+
+    # run model
+    pred = int(model.predict(df)[0])
+    probs = model.predict_proba(df)[0]
+    prob_no = float(probs[0])
+    prob_yes = float(probs[1])
+
+    # simple risk mapping
+    if prob_yes >= 0.7:
+        risk = "High Risk"
+    elif prob_yes >= 0.4:
+        risk = "Medium Risk"
     else:
-        risk_level = "Low Risk"
-    
-    # Prepare prediction result
+        risk = "Low Risk"
+
     prediction_result = {
-        'prediction': int(prediction),
-        'probability_disease': float(probabilities[1]),
-        'risk_level': risk_level
+        "prediction": pred,
+        "probability_disease": prob_yes,
+        "risk_level": risk,
     }
-    
-    # Save to database
-    prediction_id, prediction_date = save_prediction_to_db(patient_data, prediction_result)
-    
+
+    pred_id, pred_date = save_prediction_to_db(patient_dict, prediction_result)
+
+    # If DB failed, still return prediction with id = 0
     return PredictionResponse(
-        prediction_id=prediction_id if prediction_id else 0,
-        patient_name=patient.name,
-        prediction=int(prediction),
-        probability_no_disease=float(probabilities[0]),
-        probability_disease=float(probabilities[1]),
-        risk_level=risk_level,
-        model_used=model_data['model_name'],
-        prediction_date=str(prediction_date) if prediction_date else str(datetime.now())
+        prediction_id=pred_id if pred_id else 0,
+        patient_name=patient_dict.get("name", "Unknown"),
+        prediction=pred,
+        probability_no_disease=prob_no,
+        probability_disease=prob_yes,
+        risk_level=risk,
+        model_used=model_name,
+        prediction_date=pred_date if pred_date else str(datetime.now()),
     )
 
+
 @app.get("/recent-predictions")
-def get_recent():
-    """Get recent predictions from database"""
-    predictions = get_recent_predictions(10)
-    
-    if not predictions:
-        return {"message": "No predictions found"}
-    
-    formatted_predictions = []
-    for pred in predictions:
-        formatted_predictions.append({
-            "id": pred[0],
-            "patient_name": pred[1],
-            "age": pred[2],
-            "sex": "Male" if pred[3] == 1 else "Female",
-            "prediction": "Disease" if pred[4] == 1 else "No Disease",
-            "disease_probability": round(pred[5], 3),
-            "risk_level": pred[6],
-            "prediction_date": str(pred[7])
-        })
-    
-    return {
-        "total_predictions": len(formatted_predictions),
-        "predictions": formatted_predictions
-    }
+def recent_predictions():
+    rows = fetch_recent(10)
+    preds = []
+    for r in rows:
+        preds.append(
+            {
+                "id": int(r[0]),
+                "patient_name": r[1],
+                "age": int(r[2]) if r[2] is not None else None,
+                "sex": "Male" if r[3] == 1 else "Female",
+                "prediction": "Disease" if r[4] == 1 else "No Disease",
+                "disease_probability": round(float(r[5]) if r[5] is not None else 0.0, 3),
+                "risk_level": r[6],
+                "prediction_date": str(r[7]),
+            }
+        )
+    return {"total_predictions": len(preds), "predictions": preds}
+
 
 @app.get("/stats")
-def get_prediction_stats():
-    """Get statistics about predictions"""
-    try:
-        predictions = get_recent_predictions(1000)
-        
-        if not predictions:
-            return {"message": "No predictions available"}
-        
-        total_predictions = len(predictions)
-        disease_count = sum(1 for pred in predictions if pred[4] == 1)
-        no_disease_count = total_predictions - disease_count
-        
-        high_risk = sum(1 for pred in predictions if pred[6] == "High Risk")
-        medium_risk = sum(1 for pred in predictions if pred[6] == "Medium Risk")
-        low_risk = sum(1 for pred in predictions if pred[6] == "Low Risk")
-        
+def stats():
+    rows = fetch_recent(1000)
+    total = len(rows)
+    if total == 0:
+        # return zeroed structure expected by frontend
         return {
-            "total_predictions": total_predictions,
-            "disease_predictions": disease_count,
-            "no_disease_predictions": no_disease_count,
-            "disease_rate": round(disease_count/total_predictions*100, 1),
-            "risk_distribution": {
-                "high_risk": high_risk,
-                "medium_risk": medium_risk,
-                "low_risk": low_risk
-            }
+            "total_predictions": 0,
+            "disease_predictions": 0,
+            "no_disease_predictions": 0,
+            "disease_rate": 0.0,
+            "risk_distribution": {"high_risk": 0, "medium_risk": 0, "low_risk": 0},
         }
-    except Exception as e:
-        return {"error": f"Could not get stats: {e}"}
 
-@app.get("/model-info")
-def get_model_info():
+    disease_count = sum(1 for r in rows if r[4] == 1)
+    no_disease_count = total - disease_count
+    high_risk = sum(1 for r in rows if r[6] == "High Risk")
+    medium_risk = sum(1 for r in rows if r[6] == "Medium Risk")
+    low_risk = sum(1 for r in rows if r[6] == "Low Risk")
+
     return {
-        "model_name": model_data['model_name'],
-        "accuracy": model_data['accuracy'],
-        "features": feature_names,
-        "total_features": len(feature_names),
-        "database_integration": "Active",
-        "cors_enabled": "Active"
+        "total_predictions": total,
+        "disease_predictions": disease_count,
+        "no_disease_predictions": no_disease_count,
+        "disease_rate": round(disease_count / total * 100, 1),
+        "risk_distribution": {"high_risk": high_risk, "medium_risk": medium_risk, "low_risk": low_risk},
     }
-
-# For testing locally
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
