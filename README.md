@@ -1,136 +1,69 @@
-# Heart Disease Prediction System
+🫀 Heart Disease Prediction
+    This project predicts the likelihood of heart disease using patient health data and a trained Random Forest model.
 
-A full-stack machine learning application that predicts heart disease risk using patient medical data. Built with FastAPI, Next.js, and PostgreSQL.
+It includes:
+    Frontend: Built with Next.js (React framework) for a clean UI.
+    Backend: FastAPI serving the ML model and handling API requests.
+    Database: PostgreSQL (with Docker) for structured storage of patient data.
+    Machine Learning: Random Forest classifier trained on the UCI Heart Disease dataset.
 
-## Features
 
-- **ML-Powered Predictions**: Random Forest model with 85% accuracy
-- **Complete Medical Assessment**: 13 clinical parameters for comprehensive analysis
-- **Real-time Dashboard**: Analytics and prediction history
-- **Database Storage**: PostgreSQL for persistent data management
-- **Modern Frontend**: Responsive React/Next.js interface
-- **RESTful API**: FastAPI backend with automatic documentation
+📊 Workflow
+    User enters health details in the Next.js frontend form.
+    The form sends input to the FastAPI backend.
+    Backend runs the trained Random Forest model on the input.
+    Prediction (heart disease risk: Yes/No, with probability %) is returned.
+    (Optional) Data can be saved in PostgreSQL for future reference.
 
-## Tech Stack
 
-### Backend
-- **FastAPI** - Modern Python web framework
-- **PostgreSQL** - Robust relational database
-- **scikit-learn** - Machine learning model training
-- **Pandas** - Data processing and analysis
+⚙️ Tech Stack
+    Frontend: Next.js (React, TailwindCSS)
+    Backend: FastAPI (Python)
+    Database: PostgreSQL (Dockerized)
+    ML Model: Random Forest (scikit-learn)
 
-### Frontend
-- **Next.js 14** - React framework with TypeScript
-- **Tailwind CSS** - Utility-first styling
-- **Server-side rendering** - Optimized performance
 
-## Project Structure
+🚀 Getting Started
 
-```
-heart_disease_project/
-├── data/                   # Dataset files
-├── models/                 # Trained ML models
-├── notebooks/              # Data analysis and model training
-│   ├── 01_understand_data.py
-│   ├── 02_clean_data.py
-│   ├── 03_build_model.py
-│   └── 04_add_database.py
-├── src/                    # Backend API
-│   └── main.py
-└── frontend/               # Next.js application
-    └── src/app/
-```
+1. Clone the Repo
+    git clone https://github.com/Mahammadsaif/heart-disease-prediction.git
+    cd heart-disease-prediction
 
-## Installation & Setup
+2. Run with Docker Compose
+    docker-compose up --build
+    Frontend → http://localhost:3000
+    Backend API → http://localhost:8000
 
-### Prerequisites
-- Python 3.9+
-- Node.js 18+
-- PostgreSQL 14+
 
-### Backend Setup
-```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+📂 Project Structure
+    heart-disease-prediction/
+    │── backend/        # FastAPI + ML model
+    │── frontend/       # Next.js UI
+    │── notebooks/      # Data preprocessing, training
+    │── docker-compose.yml
+    │── Dockerfile
+    │── requirements.txt
+    │── README.md
 
-# Install dependencies
-pip install fastapi uvicorn pandas scikit-learn joblib psycopg2-binary
 
-# Start PostgreSQL and create database
-psql -U postgres
-CREATE DATABASE heart_disease_db;
+📖 Example Input
+    Feature	Example Value
+    Age	45
+    Sex	1 (Male)
+    Cholesterol	210
+    BP	130
+    MaxHR	170
 
-# Run database setup
-cd notebooks
-python 04_add_database.py
+Output:
+    Heart Disease Risk: 78% (Positive)
 
-# Start API server
-cd ../src
-uvicorn main:app --reload
-```
 
-### Frontend Setup
-```bash
-cd frontend
-npm install
-npm run dev
-```
+🎯 Why Random Forest?
+    Handles both numerical & categorical features well.
+    Robust against overfitting compared to a single decision tree.
+    Provides feature importance (to explain model decisions).
 
-## Usage
 
-1. **Access the application**: http://localhost:3000
-2. **Enter patient data**: Complete all 13 medical parameters
-3. **Get prediction**: AI model provides risk assessment
-4. **View dashboard**: Analyze prediction trends and statistics
-
-## API Endpoints
-
-- `GET /` - API information
-- `POST /predict` - Make heart disease prediction
-- `GET /recent-predictions` - Retrieve prediction history
-- `GET /stats` - Get prediction statistics
-- `GET /health` - System health check
-
-## Model Performance
-
-- **Algorithm**: Random Forest Classifier
-- **Accuracy**: 85%
-- **Features**: 13 clinical parameters
-- **Validation**: Stratified train-test split
-
-## Medical Parameters
-
-The model analyzes these clinical indicators:
-- Age, sex, chest pain type
-- Blood pressure and cholesterol levels
-- ECG results and heart rate data
-- Exercise stress test results
-- Cardiac imaging parameters
-
-## Contributing
-
-This project was built for educational purposes to demonstrate:
-- End-to-end ML pipeline development
-- Full-stack web application architecture
-- Database integration and API design
-- Modern frontend development practices
-
-## Deployment
-
-- **Backend**: Deployed on Render
-- **Frontend**: Deployed on Vercel
-- **Database**: PostgreSQL on Render
-
-## License
-
-This project is for educational and portfolio purposes.
-
-## Author
-
-**Saif Shaik**
-- LinkedIn: https://www.linkedin.com/in/saif-shaik/
-
----
-
-*This application is for educational demonstration only and should not be used for actual medical diagnosis.*
+🙌 Acknowledgements
+    Dataset: UCI Heart Disease dataset
+    Tools: scikit-learn, FastAPI, Next.js, PostgreSQL
