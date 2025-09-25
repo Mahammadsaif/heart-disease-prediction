@@ -1,3 +1,5 @@
+version: "3.8"
+
 services:
   db:
     image: postgres:15
@@ -26,6 +28,7 @@ services:
       DB_NAME: heart_disease
     ports:
       - "8000:8000"
+    # ❌ For production remove this, ✅ for dev keep it
     volumes:
       - .:/app
 
