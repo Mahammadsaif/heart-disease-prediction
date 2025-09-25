@@ -73,9 +73,6 @@ Thumbs.db
 # Logs
 *.log
 
-# Model files (large files)
-*.pkl
-*.joblib
 
 # Temporary files
 *.tmp
