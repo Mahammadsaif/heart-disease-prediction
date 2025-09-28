@@ -79,13 +79,11 @@ class PredictionResponse(BaseModel):
     prediction_date: str
 
 def get_db_connection() -> pg8000.native.Connection:
-    return pg8000.native.Connection(
-        user=DB_CONFIG["user"],
-        password=DB_CONFIG["password"],
-        host=DB_CONFIG["host"],
-        port=DB_CONFIG["port"],
-        database=DB_CONFIG["database"],
-    )
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        raise RuntimeError("DATABASE_URL is not set in environment variables")
+    return pg8000.native.Connection.from_url(db_url)
+
 
 @app.on_event("startup")
 def create_table_if_not_exists():
