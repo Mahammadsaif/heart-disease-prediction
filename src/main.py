@@ -7,8 +7,9 @@ import pg8000.native
 from datetime import datetime
 from typing import Any, List, Tuple, Optional
 import os
-import joblib
+import urllib.parse
 
+# Load model
 model_path = os.path.join(os.path.dirname(__file__), "..", "models", "heart_disease_model.pkl")
 model_obj = joblib.load(model_path)
 
@@ -33,16 +34,8 @@ if feature_names is None:
 if model is None:
     raise RuntimeError("Could not find trained model in models/heart_disease_model.pkl")
 
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "localhost"),
-    "port": int(os.getenv("DB_PORT", 5432)),
-    "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", "postgres"),
-    "database": os.getenv("DB_NAME", "heart_disease"),
-}
-
+# FastAPI setup
 app = FastAPI(title="Heart Disease Prediction API")
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -51,6 +44,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Pydantic models
 class PatientData(BaseModel):
     name: str = "Unknown Patient"
     age: int
@@ -78,13 +72,26 @@ class PredictionResponse(BaseModel):
     model_used: str
     prediction_date: str
 
+# DB connection (works with Render's DATABASE_URL)
 def get_db_connection() -> pg8000.native.Connection:
     db_url = os.getenv("DATABASE_URL")
     if not db_url:
         raise RuntimeError("DATABASE_URL is not set in environment variables")
-    return pg8000.native.Connection.from_url(db_url)
+    result = urllib.parse.urlparse(db_url)
+    user = result.username
+    password = result.password
+    host = result.hostname
+    port = result.port
+    database = result.path.lstrip("/")
+    return pg8000.native.Connection(
+        user=user,
+        password=password,
+        host=host,
+        port=port,
+        database=database
+    )
 
-
+# Ensure table exists
 @app.on_event("startup")
 def create_table_if_not_exists():
     try:
@@ -117,7 +124,7 @@ def create_table_if_not_exists():
     except Exception as e:
         print("DB Table Error:", e)
 
-
+# Save prediction to DB
 def save_prediction_to_db(patient: dict, prediction_result: dict) -> Tuple[Optional[int], Optional[str]]:
     try:
         conn = get_db_connection()
@@ -164,7 +171,7 @@ def save_prediction_to_db(patient: dict, prediction_result: dict) -> Tuple[Optio
         print("DB Insert Error:", e)
         return None, None
 
-
+# Fetch recent predictions
 def fetch_recent(limit: int = 10) -> List[tuple]:
     try:
         conn = get_db_connection()
@@ -181,6 +188,7 @@ def fetch_recent(limit: int = 10) -> List[tuple]:
     except:
         return []
 
+# Routes
 @app.get("/")
 def root():
     return {"message": "Heart Disease Prediction API with Database", "model": model_name, "accuracy": model_accuracy}
@@ -237,10 +245,22 @@ def stats():
     rows = fetch_recent(1000)
     total = len(rows)
     if total == 0:
-        return {"total_predictions": 0, "disease_predictions": 0, "no_disease_predictions": 0, "disease_rate": 0.0, "risk_distribution": {"high_risk": 0, "medium_risk": 0, "low_risk": 0}}
+        return {
+            "total_predictions": 0,
+            "disease_predictions": 0,
+            "no_disease_predictions": 0,
+            "disease_rate": 0.0,
+            "risk_distribution": {"high_risk": 0, "medium_risk": 0, "low_risk": 0}
+        }
     disease_count = sum(1 for r in rows if r[4] == 1)
     no_disease_count = total - disease_count
     high_risk = sum(1 for r in rows if r[6] == "High Risk")
     medium_risk = sum(1 for r in rows if r[6] == "Medium Risk")
     low_risk = sum(1 for r in rows if r[6] == "Low Risk")
-    return {"total_predictions": total, "disease_predictions": disease_count, "no_disease_predictions": no_disease_count, "disease_rate": round(disease_count / total * 100, 1), "risk_distribution": {"high_risk": high_risk, "medium_risk": medium_risk, "low_risk": low_risk}}
+    return {
+        "total_predictions": total,
+        "disease_predictions": disease_count,
+        "no_disease_predictions": no_disease_count,
+        "disease_rate": round(disease_count / total * 100, 1),
+        "risk_distribution": {"high_risk": high_risk, "medium_risk": medium_risk, "low_risk": low_risk}
+    }
